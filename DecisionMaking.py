@@ -1,7 +1,7 @@
 import os.path
 from copy import deepcopy
 import operator
-
+from typing import Tuple
 import matplotlib.pyplot as plt
 import torch
 from Environment import Environment, get_distance_between_locations, get_pairwise_distance
@@ -53,7 +53,7 @@ class DecisionMaking:
                 time,
                 n_rewarding_object,
                 only_agent_location=False,
-                cum_reward_list=None) -> tuple[dict, dict]:
+                cum_reward_list=None) -> Tuple[dict, dict]:
         # We should count the number of staying steps to avoid infinite recursions
         if cum_reward_list is None:
             cum_reward_list = []

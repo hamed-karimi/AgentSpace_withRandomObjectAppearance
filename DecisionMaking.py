@@ -124,7 +124,7 @@ class DecisionMaking:
 
         return goal_returns, goal_returns_time_took
 
-    def get_goal_return(self, environment: Environment) -> tuple[dict, dict]:
+    def get_goal_return(self, environment: Environment) -> Tuple[dict, dict]:
         # print('all objects: ', environment.get_possible_goal_locations())
         self.mean_goal_returns.clear()
         goal_returns, goal_returns_time = self.imagine(environment=deepcopy(environment),

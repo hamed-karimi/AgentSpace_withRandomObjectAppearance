@@ -7,8 +7,10 @@ import torch
 from Environment import Environment, get_distance_between_locations, get_pairwise_distance
 import numpy as np
 import math
+from math import inf
 from torch import nn
 from View import plot_env
+from datetime import datetime
 
 
 def init_empty_tensor(size: tuple):
@@ -35,6 +37,9 @@ class DecisionMaking:
             self.device = self.params.DEVICE
         # self.sigmoid = nn.Sigmoid()
         self.mean_goal_returns = dict()
+        self.possible_trajectories = []
+        self.possible_trajectories_horizon = []
+        self.mean_goal_returns_2 = dict()
         self.gamma = self.params.GAMMA
         self.init_data_tensors()
         self.use_estimated_transition = self.params.USE_ESTIMATED_TRANSITION
@@ -44,111 +49,180 @@ class DecisionMaking:
         if not os.path.exists(self.temp_plots_dir):
             os.mkdir(self.temp_plots_dir)
 
-    def imagine(self, environment: Environment,
-                horizon,
-                grabbed_goals,
-                cum_reward,
-                n_object_grabbed,
-                n_total_objects,
-                time,
-                n_rewarding_object,
-                only_agent_location=False,
-                cum_reward_list=None) -> Tuple[dict, dict]:
-        # We should count the number of staying steps to avoid infinite recursions
-        if cum_reward_list is None:
-            cum_reward_list = []
-        object_locations, agent_location = environment.get_possible_goal_locations()
-        goal_returns = dict()
-        goal_returns_time_took = dict()
+    def reset_estimates(self, goal_locations):
+        self.possible_trajectories = []
+        self.possible_trajectories_horizon = []
+        self.mean_goal_returns_2 = dict()
+        for goal in goal_locations:
+            self.mean_goal_returns_2[tuple(goal)] = -inf
 
-        if horizon >= self.horizon and n_rewarding_object > 0:  # at least one rewarding object for updating min time
-            self.min_object_time = min(self.min_object_time, time)
-        if horizon >= self.horizon:# or n_object_grabbed == n_total_objects:
-            # and n_rewarding_object > 0:  # at least one rewarding object
-            # print(time, grabbed_goals, end=' ')
-            # print(cum_reward, cum_reward/time)
-            first_step = tuple(grabbed_goals[0])
-            if first_step in self.mean_goal_returns:
-                self.mean_goal_returns[first_step] = max(self.mean_goal_returns[first_step],
-                                                         cum_reward/horizon)
-            else:
-                self.mean_goal_returns[first_step] = cum_reward/horizon
-            self.output_str += '{0} {1} {2} {3}\n'.format(horizon, grabbed_goals, cum_reward, cum_reward/time)
-            self.output_str += '{0}\n\n'.format(cum_reward_list)
-            # if horizon >= 23: #self.horizon+4:  # give it another 2 steps chance to see if it reaches a better goal
-            return goal_returns, goal_returns_time_took
-        # elif horizon >= self.horizon and time >= self.min_object_time:  # no objects, only staying
-        #     print(time, grabbed_goals, end=' ')
-        #     print(cum_reward)
-        #     return goal_returns
-
-        state = environment.get_observation()
-        env_map = torch.Tensor(state[0]).unsqueeze(0)
-
-        staying_goal = []
-        if only_agent_location:
-            all_goal_locations = deepcopy(agent_location)
-        elif not np.all(object_locations == agent_location, axis=1).any():
-            all_goal_locations = np.concatenate([object_locations, agent_location], axis=0)
-            staying_goal.append(agent_location[0])
-        else:
-            all_goal_locations = deepcopy(object_locations)
-        for obj in all_goal_locations:
+    def estimate_reward_of_possible_trajectories(self, environment: Environment):
+        for i, trajectory in enumerate(self.possible_trajectories):
+            cum_reward = 0
             imagined_environment = deepcopy(environment)
-            goal_map = torch.zeros_like(env_map[:, 0, :, :])
-            goal_map[0, obj[0], obj[1]] = 1
+            state = environment.get_observation()
+            env_map = torch.Tensor(state[0]).unsqueeze(0)
+            for obj in trajectory:
+                goal_map = torch.zeros_like(env_map[:, 0, :, :])
+                goal_map[0, obj[0], obj[1]] = 1
+                next_obs, pred_reward, _, _, _ = imagined_environment.step(goal_map=goal_map.squeeze().numpy())
+                next_mental_state = next_obs[1]
+                imagined_environment.set_mental_state(next_mental_state)
+                cum_reward += pred_reward * self.params.GAMMA
+            self.mean_goal_returns_2[tuple(trajectory[0])] = max(self.mean_goal_returns_2[tuple(trajectory[0])],
+                                                                 cum_reward/self.possible_trajectories_horizon[i])
 
-            next_obs, pred_reward, _, _, info = imagined_environment.step(goal_map=goal_map.squeeze().numpy())
-            next_mental_state = next_obs[1]
+    def generate_possible_trajectories(self,
+                                       agent_location,
+                                       object_locations,
+                                       horizon,
+                                       grabbed_goals):
+        if horizon >= self.horizon:
+            self.possible_trajectories.append(grabbed_goals)
+            self.possible_trajectories_horizon.append(horizon)
+            return
 
-            imagined_environment.set_mental_state(next_mental_state)
+        # if not np.all(object_locations == agent_location, axis=1).any():  # agent location not in objects
+        goal_locations = np.concatenate([object_locations, agent_location], axis=0)
+        # else:
+        #     goal_locations = deepcopy(object_locations)
+        diagonal, straight = get_distance_between_locations(agent_location[0, 0], agent_location[0, 1],
+                                                            goal_locations[:, 0], goal_locations[:, 1])
+
+        agent_to_objects_distances = math.sqrt(2) * diagonal + straight
+        for obj_id, obj in enumerate(goal_locations):
+            dt = np.array(1) if agent_to_objects_distances[obj_id] < 1.4 else agent_to_objects_distances[obj_id]
+            if agent_to_objects_distances[obj_id] == 0:  # stayed
+                new_object_locations = deepcopy(object_locations)
+            else:
+                new_object_locations = object_locations[~np.all(object_locations == obj, axis=1)]
             new_grabbed = deepcopy(grabbed_goals)
             new_grabbed.append(obj.tolist())
-            future_goal_returns, future_goal_returns_time_takes = self.imagine(environment=imagined_environment,
-                                                                               horizon=horizon + info['dt'],  # 1,
-                                                                               grabbed_goals=new_grabbed,
-                                                                               cum_reward=self.gamma * pred_reward + cum_reward,
-                                                                               n_object_grabbed=n_object_grabbed + int(info['object']),
-                                                                               n_total_objects=n_total_objects,
-                                                                               time=time + info['dt'],
-                                                                               n_rewarding_object=n_rewarding_object + int(info['rewarding']),
-                                                                               only_agent_location=only_agent_location,
-                                                                               cum_reward_list=cum_reward_list+[pred_reward])
+            self.generate_possible_trajectories(agent_location=np.expand_dims(obj, axis=0),
+                                                object_locations=new_object_locations,
+                                                horizon=horizon + dt,
+                                                grabbed_goals=new_grabbed)
 
-            max_future_goal_return = tuple([0, 0]) if not future_goal_returns else max(future_goal_returns.items(),
-                                                                                       key=operator.itemgetter(1))
-            future_returns = max_future_goal_return[1]
-            time_takes = 0 if not future_goal_returns_time_takes else future_goal_returns_time_takes[max_future_goal_return[0]]
-            goal_returns[tuple(obj)] = self.gamma ** info['dt'] * (pred_reward + future_returns)
-            goal_returns_time_took[tuple(obj)] = info['dt'] + time_takes
+    # def imagine(self, environment: Environment,
+    #             horizon,
+    #             grabbed_goals,
+    #             cum_reward,
+    #             n_object_grabbed,
+    #             n_total_objects,
+    #             time,
+    #             n_rewarding_object,
+    #             only_agent_location=False,
+    #             cum_reward_list=None) -> Tuple[dict, dict]:
+    #     # We should count the number of staying steps to avoid infinite recursions
+    #     if cum_reward_list is None:
+    #         cum_reward_list = []
+    #     goal_returns = dict()
+    #     goal_returns_time_took = dict()
 
-        return goal_returns, goal_returns_time_took
+        # if horizon >= self.horizon and n_rewarding_object > 0:  # at least one rewarding object for updating min time
+        #     self.min_object_time = min(self.min_object_time, time)
+        # if horizon >= self.horizon:  # or n_object_grabbed == n_total_objects:
+        #     # and n_rewarding_object > 0:  # at least one rewarding object
+        #     # print(time, grabbed_goals, end=' ')
+        #     # print(cum_reward, cum_reward/time)
+        #     first_step = tuple(grabbed_goals[0])
+        #     if first_step in self.mean_goal_returns:
+        #         self.mean_goal_returns[first_step] = max(self.mean_goal_returns[first_step],
+        #                                                  cum_reward / horizon)
+        #     else:
+        #         self.mean_goal_returns[first_step] = cum_reward / horizon
+        #     self.output_str += '{0} {1} {2} {3}\n'.format(horizon, grabbed_goals, cum_reward, cum_reward / time)
+        #     self.output_str += '{0}\n\n'.format(cum_reward_list)
+        #     # if horizon >= 23: #self.horizon+4:  # give it another 2 steps chance to see if it reaches a better goal
+        #     return goal_returns, goal_returns_time_took
+        # # elif horizon >= self.horizon and time >= self.min_object_time:  # no objects, only staying
+        # #     print(time, grabbed_goals, end=' ')
+        # #     print(cum_reward)
+        # #     return goal_returns
+        # object_locations, agent_location = environment.get_possible_goal_locations()
+        # state = environment.get_observation()
+        # env_map = torch.Tensor(state[0]).unsqueeze(0)
+        #
+        # staying_goal = []
+        # if only_agent_location:
+        #     all_goal_locations = deepcopy(agent_location)
+        # elif not np.all(object_locations == agent_location, axis=1).any():
+        #     all_goal_locations = np.concatenate([object_locations, agent_location], axis=0)
+        #     staying_goal.append(agent_location[0])
+        # else:
+        #     all_goal_locations = deepcopy(object_locations)
+        # for obj in all_goal_locations:
+        #     imagined_environment = deepcopy(environment)
+        #     goal_map = torch.zeros_like(env_map[:, 0, :, :])
+        #     goal_map[0, obj[0], obj[1]] = 1
+        #
+        #     next_obs, pred_reward, _, _, info = imagined_environment.step(goal_map=goal_map.squeeze().numpy())
+        #     next_mental_state = next_obs[1]
+        #
+        #     imagined_environment.set_mental_state(next_mental_state)
+        #     new_grabbed = deepcopy(grabbed_goals)
+        #     new_grabbed.append(obj.tolist())
+        #     future_goal_returns, future_goal_returns_time_takes = self.imagine(environment=imagined_environment,
+        #                                                                        horizon=horizon + info['dt'],  # 1,
+        #                                                                        grabbed_goals=new_grabbed,
+        #                                                                        cum_reward=self.gamma * pred_reward + cum_reward,
+        #                                                                        n_object_grabbed=n_object_grabbed + int(
+        #                                                                            info['object']),
+        #                                                                        n_total_objects=n_total_objects,
+        #                                                                        time=time + info['dt'],
+        #                                                                        n_rewarding_object=n_rewarding_object + int(
+        #                                                                            info['rewarding']),
+        #                                                                        only_agent_location=only_agent_location,
+        #                                                                        cum_reward_list=cum_reward_list + [
+        #                                                                            pred_reward])
+        #
+        #     # max_future_goal_return = tuple([0, 0]) if not future_goal_returns else max(future_goal_returns.items(),
+        #     #                                                                            key=operator.itemgetter(1))
+        #     # future_returns = max_future_goal_return[1]
+        #     # time_takes = 0 if not future_goal_returns_time_takes else future_goal_returns_time_takes[max_future_goal_return[0]]
+        #     # goal_returns[tuple(obj)] = self.gamma ** info['dt'] * (pred_reward + future_returns)
+        #     # goal_returns_time_took[tuple(obj)] = info['dt'] + time_takes
+        #
+        # return goal_returns, goal_returns_time_took
 
-    def get_goal_return(self, environment: Environment) -> Tuple[dict, dict]:
+    def get_goal_return(self, environment: Environment):
         # print('all objects: ', environment.get_possible_goal_locations())
-        self.mean_goal_returns.clear()
-        goal_returns, goal_returns_time = self.imagine(environment=deepcopy(environment),
-                                    horizon=0,
-                                    grabbed_goals=[],
-                                    cum_reward=0,
-                                    n_object_grabbed=0,
-                                    n_total_objects=sum(environment.each_type_object_num),
-                                    time=0,
-                                    n_rewarding_object=0)
-        return goal_returns, goal_returns_time
+        object_locations, agent_location = environment.get_possible_goal_locations()
+        self.reset_estimates(goal_locations=np.concatenate([object_locations,
+                                                            agent_location], axis=0))
+        self.generate_possible_trajectories(agent_location=agent_location,
+                                            object_locations=object_locations,
+                                            horizon=0,
+                                            grabbed_goals=[])
+        self.estimate_reward_of_possible_trajectories(environment=deepcopy(environment))
+        # print(datetime.now() - st1)
+        # st2 = datetime.now()
+        # self.mean_goal_returns.clear()
+        # goal_returns, goal_returns_time = self.imagine(environment=deepcopy(environment),
+        #                                                horizon=0,
+        #                                                grabbed_goals=[],
+        #                                                cum_reward=0,
+        #                                                n_object_grabbed=0,
+        #                                                n_total_objects=sum(environment.each_type_object_num),
+        #                                                time=0,
+        #                                                n_rewarding_object=0)
+        # print(datetime.now() - st2)
+        # return goal_returns, goal_returns_time
 
     def take_action(self, environment: Environment):
         self.output_str = ''
         self.min_object_time = self.min_object_time_init
         object_locations, agent_location = environment.get_possible_goal_locations()
         self.horizon = self.get_horizon(agent_location, object_locations)
-        goal_returns, goal_returns_time = self.get_goal_return(environment)
-        mean_goal_returns = {
-            goal: (goal_returns[goal] / goal_returns_time[goal]) for goal in goal_returns.keys()
-        }
+        # goal_returns, goal_returns_time = self.get_goal_return(environment)
+        self.get_goal_return(environment)
+        # mean_goal_returns = self.mean_goal_returns.copy()
+        # mean_goal_returns = {
+        #     goal: (goal_returns[goal] / goal_returns_time[goal]) for goal in goal_returns.keys()
+        # }
         with open('./output.txt', 'w') as f:
             f.write(self.output_str)
-        best_goal_location = max(mean_goal_returns.items(), key=operator.itemgetter(1))[0]
+        best_goal_location = max(self.mean_goal_returns_2.items(), key=operator.itemgetter(1))[0]
         goal_map = np.zeros((self.params.HEIGHT, self.params.WIDTH))
         goal_map[best_goal_location[0], best_goal_location[1]] = 1
         return goal_map
@@ -193,14 +267,15 @@ class DecisionMaking:
                         intermediate_goal_location += intermediate_step
                         intermediate_goal_map = np.zeros_like(final_goal_map)
                         intermediate_goal_map[intermediate_goal_location[0],
-                                              intermediate_goal_location[1]] = 1
+                        intermediate_goal_location[1]] = 1
                         next_state, reward, _, _, info = environment.step(goal_map=intermediate_goal_map,
                                                                           update_objects_status=True)
                         state = deepcopy(next_state)
                         env_dict = environment.get_env_dict()
                         # There is bug in adding point to the tensor. check the plots!
                         self.add_data_point(state, env_dict, episode, plot_data_point=plot_during_data_generation)
-                        if info['environment_changed']: # appearing or disappearing of objects, ends the current episode_step
+                        if info[
+                            'environment_changed']:  # appearing or disappearing of objects, ends the current episode_step
                             break
 
                 else:  # agent stays
@@ -236,7 +311,7 @@ class DecisionMaking:
         at_object = farthest_object
         for i in range(1, self.params.OBJECT_HORIZON):
             farthest_from_at = np.argmax(pairwise_object_distances[at_object, :])
-            horizon += max(pairwise_object_distances[at_object, farthest_from_at], 1) # stay if no objects
+            horizon += max(pairwise_object_distances[at_object, farthest_from_at], 1)  # stay if no objects
             pairwise_object_distances[at_object, :] = 0  # remove the farthest
             pairwise_object_distances[:, at_object] = 0
             at_object = farthest_from_at
@@ -272,6 +347,7 @@ class DecisionMaking:
             plt.close()
         self.action_step += 1
         self.episode_step_num[episode] = self.action_step
+
     def init_data_tensors(self):
         self.action_step = 0
         self.env_tensor = init_empty_tensor(size=(self.params.EPISODE_NUM,
@@ -326,7 +402,7 @@ class DecisionMaking:
         #             self.states_params_steps_tensor[episode, action_step, :] = self.states_params_tensor[episode, step,
         #                                                                        :]
         #             action_step += 1
-            # self.episode_step_num[episode] = action_step
+        # self.episode_step_num[episode] = action_step
 
         torch.save(self.env_tensor, os.path.join(data_dir, 'environments.pt'))
         torch.save(self.mental_state_tensor, os.path.join(data_dir, 'mental_states.pt'))

@@ -292,8 +292,8 @@ class Environment(gym.Env):
 
     def _init_object_num_on_map(self) -> np.array:
         # e.g., self.few_many_objects : ['few', 'many']
-        few_range = np.array([1]) #np.array([1, 2])
-        many_range = np.array([4]) #np.array([3, 4, 5])
+        few_range = np.array([0, 1]) #np.array([1, 2])
+        many_range = np.array([2, 3]) #np.array([3, 4, 5])
         ranges = {'few': few_range,
                   'many': many_range}
         each_type_object_num = np.zeros((self.object_type_num,), dtype=int)

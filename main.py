@@ -22,10 +22,12 @@ from Object import Object
 if __name__ == '__main__':
     utils = Utils()
     agent = DecisionMaking(params=utils.params)
-    few_many = [['few', 'few'],
-                ['few', 'many'],
-                ['many', 'few'],
-                ['many', 'many']]
+    few_many = [
+        # ['few', 'few'],
+        # ['few', 'many'],
+        # ['many', 'few'],
+        ['many', 'many']
+    ]
     agent.generate_behavior(few_many=few_many)
     plot_tensors(utils.params.EPISODE_NUM,
                  agent.few_many_array,
@@ -61,6 +63,5 @@ if __name__ == '__main__':
     #     environment.object_reappears = True
     #     next_state, reward, _, _, _ = environment.step(goal_map=goal_map)
     #     print(environment._mental_states)
-
 
 # See PyCharm help at https://www.jetbrains.com/help/pycharm/

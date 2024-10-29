@@ -23,9 +23,9 @@ if __name__ == '__main__':
     utils = Utils()
     agent = DecisionMaking(params=utils.params)
     few_many = [
-        # ['few', 'few'],
-        # ['few', 'many'],
-        # ['many', 'few'],
+        ['few', 'few'],
+        ['few', 'many'],
+        ['many', 'few'],
         ['many', 'many']
     ]
     agent.generate_behavior(few_many=few_many)

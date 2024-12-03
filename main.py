@@ -21,26 +21,24 @@ from Object import Object
 
 if __name__ == '__main__':
     utils = Utils()
-    agent = DecisionMaking(params=utils.params)
-    few_many = [
-        ['few', 'few'],
-        ['few', 'many'],
-        ['many', 'few'],
-        ['many', 'many']
-    ]
-    agent.generate_behavior(few_many=few_many)
-    plot_tensors(utils.params.EPISODE_NUM,
-                 agent.few_many_array,
-                 # agent.env_steps_tensor,
-                 # agent.mental_state_steps_tensor,
-                 # agent.states_params_steps_tensor,
-                 agent.env_tensor,
-                 agent.mental_state_tensor,
-                 agent.states_params_tensor,
-                 # agent.action_step
-                 agent.episode_step_num
-                 )
-    # create_video_from_plots(utils.params, write_ms=True)
+    # agent = DecisionMaking(params=utils.params)
+    # few_many = [
+    #     ['few', 'few'],
+    #     ['few', 'many'],
+    #     ['many', 'few'],
+    #     ['many', 'many']
+    # ]
+    # agent.generate_behavior(few_many=few_many)
+    # print('Plotting...')
+    # plot_tensors(utils.params.EPISODE_NUM,
+    #              agent.few_many_dict,
+    #              agent.env_tensor,
+    #              agent.mental_state_tensor,
+    #              agent.states_params_tensor,
+    #              agent.episode_step_num
+    #              )
+    # print('Making video...')
+    create_video_from_plots(utils.params)
 
     # environment = Environment(params=utils.params, few_many_objects=['few', 'many'], object_reappears=False)
     # index = 0

@@ -10,7 +10,7 @@ import math
 from math import inf
 from torch import nn
 from View import plot_env
-from datetime import datetime
+import pickle
 
 
 def init_empty_tensor(size: tuple):
@@ -19,9 +19,10 @@ def init_empty_tensor(size: tuple):
 
 class DecisionMaking:
     def __init__(self, params):
+        self.dt_tensor = None
         self.output_str = None
         self.action_step = None
-        self.few_many_array = None
+        self.few_many_dict = None
         self.episode_step_num = None
         self.env_steps_tensor = None
         self.states_params_steps_tensor = None
@@ -243,11 +244,13 @@ class DecisionMaking:
                     episode_few_many = [np.random.choice(['few', 'many']) for _ in range(self.params.OBJECT_TYPE_NUM)]
                 else:
                     episode_few_many = few_many[episode]
-                self.few_many_array[episode] = ' '.join(episode_few_many)
+                # self.few_many_dict[episode] = ' '.join(episode_few_many)
+                self.few_many_dict[' '.join(episode_few_many)].append(episode)
                 environment = Environment(params=self.params, few_many_objects=episode_few_many)
             state, _ = environment.reset()
             env_dict = environment.get_env_dict()
-            self.add_data_point(state, env_dict, episode, plot_data_point=plot_during_data_generation)  # initial env
+            self.add_data_point(state, env_dict, episode, dt=0,
+                                plot_data_point=plot_during_data_generation)  # initial env
             for step in range(int(self.params.EPISODE_STEPS)):
                 print(step, end=' ')
                 environment.object_reappears = False
@@ -273,17 +276,18 @@ class DecisionMaking:
                         state = deepcopy(next_state)
                         env_dict = environment.get_env_dict()
                         # There is bug in adding point to the tensor. check the plots!
-                        self.add_data_point(state, env_dict, episode, plot_data_point=plot_during_data_generation)
-                        if info[
-                            'environment_changed']:  # appearing or disappearing of objects, ends the current episode_step
+                        self.add_data_point(state, env_dict, episode, dt=info['dt'].item(),
+                                            plot_data_point=plot_during_data_generation)
+                        if info['environment_changed']:  # appearing or disappearing of objects, ends the current episode_step
                             break
 
                 else:  # agent stays
-                    next_state, reward, _, _, _ = environment.step(goal_map=final_goal_map,
+                    next_state, reward, _, _, info = environment.step(goal_map=final_goal_map,
                                                                    update_objects_status=True)
                     state = deepcopy(next_state)
                     env_dict = environment.get_env_dict()
-                    self.add_data_point(state, env_dict, episode, plot_data_point=plot_during_data_generation)
+                    self.add_data_point(state, env_dict, episode, dt=info['dt'].item(),
+                                        plot_data_point=plot_during_data_generation)
 
                 # self.add_data_point(state, env_dict, episode, step)
                 # state = deepcopy(next_state)
@@ -324,7 +328,7 @@ class DecisionMaking:
         # else:  # No objects on the map
         #     self.horizon = math.sqrt(2) * self.params.WIDTH
 
-    def add_data_point(self, state: list, env_dict: dict, episode, plot_data_point=False):
+    def add_data_point(self, state: list, env_dict: dict, episode, dt, plot_data_point=False):
         env_map = torch.Tensor(state[0])
         mental_states = torch.Tensor(state[1])
         states_params = torch.Tensor(np.concatenate([state[2], state[3].flatten()]))
@@ -334,7 +338,7 @@ class DecisionMaking:
         self.env_tensor[episode, self.action_step, :, :, :] = env_map
         self.mental_state_tensor[episode, self.action_step, :] = mental_states
         self.states_params_tensor[episode, self.action_step, :] = states_params
-
+        self.dt_tensor[episode, self.action_step] = dt
         if plot_data_point:
             fig, ax = plot_env(env_map, show_reward=True)
             fig.savefig(os.path.join(self.temp_plots_dir,
@@ -365,49 +369,23 @@ class DecisionMaking:
                                                        self.params.EPISODE_ACTION_STEPS,
                                                        self.params.OBJECT_TYPE_NUM * 2 + self.params.OBJECT_TYPE_NUM))
 
-        # self.env_steps_tensor = init_empty_tensor((self.params.EPISODE_NUM,
-        #                                            self.params.EPISODE_ACTION_STEPS,
-        #                                            # EPISODE_ACTION_STEPS has to be larger than EPISODE_STEPS
-        #                                            self.params.OBJECT_TYPE_NUM + 1,
-        #                                            self.params.HEIGHT,
-        #                                            self.params.WIDTH))
-        # self.mental_state_steps_tensor = init_empty_tensor((self.params.EPISODE_NUM,
-        #                                                     self.params.EPISODE_ACTION_STEPS,
-        #                                                     self.params.OBJECT_TYPE_NUM))
-        # self.states_params_steps_tensor = init_empty_tensor((self.params.EPISODE_NUM,
-        #                                                      self.params.EPISODE_ACTION_STEPS,
-        #                                                      self.params.OBJECT_TYPE_NUM * 2 + self.params.OBJECT_TYPE_NUM))
+        self.dt_tensor = init_empty_tensor((self.params.EPISODE_NUM,
+                                            self.params.EPISODE_ACTION_STEPS))
+
         self.episode_step_num = torch.zeros((self.params.EPISODE_NUM, 1))
-        self.few_many_array = np.zeros((self.params.EPISODE_NUM,), dtype='<U9')
+        self.few_many_dict = {'few few':[], 'few many':[], 'many few':[], 'many many': []} #np.zeros((self.params.EPISODE_NUM,), dtype='<U9')
 
     def save_tensors(self):
         data_dir = './Data'
         if not os.path.exists(data_dir):
             os.mkdir(data_dir)
 
-        # for episode in range(int(self.params.EPISODE_NUM)):
-        #     # state_0_ind = 0
-        #     action_step = 0
-        #     for step in range(int(self.params.EPISODE_STEPS) - 1):
-        #         self.env_steps_tensor[episode, action_step, :, :, :] = self.env_tensor[episode, step, :, :, :].clone()
-        #         self.mental_state_steps_tensor[episode, action_step, :] = self.mental_state_tensor[episode, step,
-        #                                                                   :].clone()
-        #         self.states_params_steps_tensor[episode, action_step, :] = self.states_params_tensor[episode, step,
-        #                                                                    :].clone()
-        #         action_step += 1
-        #         for env_map, mental_state in self.next_step_state(episode=episode, state_0_ind=step,
-        #                                                           state_1_ind=step + 1):
-        #             self.env_steps_tensor[episode, action_step, :, :, :] = env_map
-        #             self.mental_state_steps_tensor[episode, action_step, :] = mental_state
-        #             self.states_params_steps_tensor[episode, action_step, :] = self.states_params_tensor[episode, step,
-        #                                                                        :]
-        #             action_step += 1
-        # self.episode_step_num[episode] = action_step
-
         torch.save(self.env_tensor, os.path.join(data_dir, 'environments.pt'))
         torch.save(self.mental_state_tensor, os.path.join(data_dir, 'mental_states.pt'))
         torch.save(self.states_params_tensor, os.path.join(data_dir, 'states_params.pt'))
-
+        torch.save(self.dt_tensor, os.path.join(data_dir, 'dt.pt'))
+        with open(os.path.join(data_dir, 'few_many_dict.pkl'), 'wb') as file_handler:
+            pickle.dump(self.few_many_dict, file_handler)
         # torch.save(self.env_steps_tensor, os.path.join(data_dir, 'environments_steps.pt'))
         # torch.save(self.mental_state_steps_tensor, os.path.join(data_dir, 'mental_states_steps.pt'))
         # torch.save(self.states_params_steps_tensor,

@@ -73,6 +73,7 @@ class Environment(gym.Env):
         self._environment_states_parameters = [self._mental_states_slope, self._object_coefficients]
         self._environment_states_parameters_range = [self.params.MENTAL_STATES_SLOPE_RANGE,
                                                      self.params.ENVIRONMENT_OBJECT_COEFFICIENT_RANGE]
+        self.each_type_invisible_object_num = np.zeros((self.object_type_num), dtype=int)
         self._object_coefficients_min = self.params.MIN_MAX_OBJECT_REWARD[0] / self.params.MIN_MAX_OBJECT_REWARD[1]
         self.observation_space = spaces.Tuple(
             (spaces.Box(0, 1, shape=(1 + self.object_type_num,
@@ -234,16 +235,19 @@ class Environment(gym.Env):
         environment_changed = False
         # check the plots  and see the bug
         visible_objects = {}
+        can_make_invisible = True
         for key in self._env_map_dict.keys():
             visible_objects[self._env_map_dict[key].index] = deepcopy(key)
 
         for obj_type in range(self.object_type_num):
+            if self.each_type_invisible_object_num[obj_type] == 1: # Only allow one invisible object of each type (for now)
+                can_make_invisible = False
             for at in range(self.each_type_object_num[obj_type]):
                 at_object = self._object_pool[obj_type][at]
                 if at_object.visible:
                     visible_prob = decay_func(at_object.visible_dur)
                     sample = random.random()
-                    if sample > visible_prob and not object_event:  # make it invisible, only when no other object event happened
+                    if sample > visible_prob and not object_event and can_make_invisible:  # make it invisible, only when no other object event happened
                         object_key = visible_objects[at_object.index]
                         object_type = object_key[0]
                         object_loc = object_key[1:]
@@ -256,6 +260,7 @@ class Environment(gym.Env):
                         self._env_map[object_type + 1, object_loc[0], object_loc[1]] = 0
                         object_event = True
                         environment_changed = True
+                        self.each_type_invisible_object_num[obj_type] += 1
                     else:
                         at_object.visible_dur += 1
                 elif at_object.invisible_dur <= 1 and not object_event:
@@ -263,13 +268,14 @@ class Environment(gym.Env):
                     at_object.to_appear = True
                     object_event = True
                     environment_changed = True
-                    # at_object.visible_dur = 0
+                    self.each_type_invisible_object_num[obj_type] -= 1
                 else:
                     at_object.invisible_dur -= 1
         for key in to_pop:
             self._env_map_dict.pop(key)
         self._init_random_map()
         return environment_changed
+
     def _positive_mental_states(self, mental_states=None):
         if mental_states is None:
             mental_states = self._mental_states.copy()
@@ -292,8 +298,8 @@ class Environment(gym.Env):
 
     def _init_object_num_on_map(self) -> np.array:
         # e.g., self.few_many_objects : ['few', 'many']
-        few_range = np.array([0, 1]) #np.array([1, 2])
-        many_range = np.array([2, 3]) #np.array([3, 4, 5])
+        few_range = np.array([1]) #np.array([1, 2])
+        many_range = np.array([3]) #np.array([3, 4, 5])
         ranges = {'few': few_range,
                   'many': many_range}
         each_type_object_num = np.zeros((self.object_type_num,), dtype=int)

@@ -10,4 +10,4 @@ class Object:
         self.index = index
         self.visible_dur = 0 #.95
         self.invisible_dur = 0
-        self.invisible_steps_range = [1, 10]
+        self.invisible_steps_range = [1, 5]

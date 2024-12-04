@@ -221,8 +221,8 @@ class DecisionMaking:
         # mean_goal_returns = {
         #     goal: (goal_returns[goal] / goal_returns_time[goal]) for goal in goal_returns.keys()
         # }
-        with open('./output.txt', 'w') as f:
-            f.write(self.output_str)
+        # with open('./output.txt', 'w') as f:
+        #     f.write(self.output_str)
         best_goal_location = max(self.mean_goal_returns_2.items(), key=operator.itemgetter(1))[0]
         goal_map = np.zeros((self.params.HEIGHT, self.params.WIDTH))
         goal_map[best_goal_location[0], best_goal_location[1]] = 1

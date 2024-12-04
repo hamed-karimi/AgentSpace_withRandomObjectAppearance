@@ -38,7 +38,7 @@ if __name__ == '__main__':
                  agent.episode_step_num
                  )
     print('Making video...')
-    # create_video_from_plots(utils.params)
+    create_video_from_plots(utils.params)
 
     # environment = Environment(params=utils.params, few_many_objects=['few', 'many'], object_reappears=False)
     # index = 0

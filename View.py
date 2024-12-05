@@ -168,7 +168,7 @@ def plot_tensors(episode_num, few_many_array, env_tensor, mental_state_tensor,
             for step in range(int(step_num_tensor[episode])):
                 save_dir = os.path.join(base_dir, few_many)
 
-                fig, ax = plot_env(env_tensor[episode, step, :, :, :], show_reward=True)
+                fig, ax = plot_env(env_tensor[episode, step, :, :, :], show_reward=False)
                 fig.savefig('{0}/episode_{1}_step{2}_ms({3:.2f}_{4:.2f})_sl({5:.2f}_{6:.2f}).png'.format(save_dir,
                                                                                                          # episode_dict[few_many_dict[episode]],
                                                                                                          episode,

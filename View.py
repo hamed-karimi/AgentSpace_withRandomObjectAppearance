@@ -51,20 +51,13 @@ def make_frame_square(image):
     width = image_size[0]
     height = image_size[1]
 
-    if width != height:
-        big_side = width if width > height else height
-
-        background = Image.new('RGBA', (big_side, big_side), (255, 255, 255, 255))
-        offset = (int(round(((big_side - width) / 2), 0)), int(round(((big_side - height) / 2), 0)))
-
-        background.paste(image, offset)
-        # background.save('out.png')
-        print("Image has been resized !")
-        return background
-
-    else:
-        print("Image is already a square, it has not been resized !")
-
+    big_side = width if width > height else height
+    background = Image.new('RGBA', (big_side, big_side), (255, 255, 255, 255))
+    offset = (int(round(((big_side - width) / 2), 0)), int(round(((big_side - height) / 2), 0)))
+    background.paste(image, offset)
+    # background.save('out.png')
+    # print("Image has been resized !")
+    return background
 
 def get_marker(layer: int, reward: int):
     markers = {
@@ -224,6 +217,7 @@ def get_one_step_face_locations(face, agent_loc1=None, time_point1=None, agent_l
                                                smooth)  # from the second frame onwar
 
     return face_locations  # frames
+
 def get_next_frame_with_metronome(grid: Image,
                                   face: Face = None,
                                   background_location=None,
@@ -245,6 +239,18 @@ def get_next_frame_with_metronome(grid: Image,
     return frame
 
 
+def get_step_actions(episode_step_actions_dict, step):
+    if step == 0:  # first step
+        step_actions = episode_step_actions_dict[step][:-1]
+    elif step == max(episode_step_actions_dict.keys()):  # last step
+        step_actions = [episode_step_actions_dict[step - 1][-1]]
+        step_actions.extend(episode_step_actions_dict[step])
+    else:  # all others
+        step_actions = [episode_step_actions_dict[step - 1][-1]]
+        step_actions.extend(episode_step_actions_dict[step][:-1])
+    return step_actions
+
+
 def create_video_from_plots(params):
     videos_dir = './Videos'
     if not os.path.exists('./Videos'):
@@ -256,6 +262,7 @@ def create_video_from_plots(params):
     env_tensor = torch.load(os.path.join(data_dir, 'environments.pt'))
     with open(os.path.join(data_dir, 'few_many_dict.pkl'), 'rb') as f:
         few_many_dict = pickle.load(f)
+    steps_action_dict = np.load(os.path.join(data_dir, 'step_actions_dict.npy'), allow_pickle=True)
     face = Face()
 
     for it1 in ['few', 'many']:
@@ -274,57 +281,76 @@ def create_video_from_plots(params):
             # scale = 11.52
             for i, episode in enumerate(condition_episodes):
                 at_filenames = plots_filename[i]
-                step_num = len(at_filenames)
-                episode_dt = dt_tensor[episode, :step_num]
-                episode_env = env_tensor[episode, :step_num]
+                step_action_num = len(at_filenames)
+                episode_dt = dt_tensor[episode, :step_action_num]
+                episode_env = env_tensor[episode, :step_action_num]
                 fps = 20
                 metronome_jump = 5
                 frame_timepoints = (episode_dt * fps).cumsum(dim=0)  # params.SECONDS_PER_FRAME * step_num * 100
 
-                video_writer = cv2.VideoWriter(filename=os.path.join(few_many_path, 'episode_{0}.avi'.format(episode)),
-                                               # fourcc=cv2.VideoWriter_fourcc(*"mp4v"),
-                                               fourcc=cv2.VideoWriter_fourcc(*'MJPG'),
-                                               # MJPG codec with .MJPG output file works but the video is 142MB
-                                               # fourcc=-1,
-                                               fps=fps,
-                                               frameSize=(frame_size, frame_size))
+                # video_writer = cv2.VideoWriter(filename=os.path.join(few_many_path, 'episode_{0}.avi'.format(episode)),
+                #                                # fourcc=cv2.VideoWriter_fourcc(*"mp4v"),
+                #                                fourcc=cv2.VideoWriter_fourcc(*'MJPG'),
+                #                                # MJPG codec with .MJPG output file works but the video is 142MB
+                #                                # fourcc=-1,
+                #                                fps=fps,
+                #                                frameSize=(frame_size, frame_size))
                 t1 = 0
                 m_ind = 0
                 direction = 1
                 # step_num = 3
-                for step in range(step_num - 1):
-                    frame_path = os.path.join(plots_dir, it1 + ' ' + it2, at_filenames[step])
-                    agent_loc1 = torch.argwhere(episode_env[step, 0, :, :]).squeeze()
-                    agent_loc2 = torch.argwhere(episode_env[step + 1, 0, :, :]).squeeze()
-                    # frame = cv2.imread(frame_path, cv2.IMREAD_COLOR) #[:, 922:6451, :]
-                    show_agents = (agent_loc1 != agent_loc2)
-                    grid = make_frame_square(Image.open(frame_path))
-                    t2 = int(frame_timepoints[step + 1].round().item())
-                    one_step_face_locations = get_one_step_face_locations(face=face,
-                                                                          agent_loc1=agent_loc1,
-                                                                          time_point1=t1,
-                                                                          agent_loc2=agent_loc2,
-                                                                          time_point2=t2,
-                                                                          smooth=True,
-                                                                          intermediate_jump=1)
-                    div = int((t2 - t1) // len(one_step_face_locations))
-                    for f_i, f in enumerate(range(t1, t2)):
-                        m_name = './metronome/{0}.png'.format(m_ind)
-                        face_location = one_step_face_locations[int(f_i // div)]
-                        frame = get_next_frame_with_metronome(grid.copy(),
-                                                              face=face,
-                                                              background_location=one_step_face_locations[0],
-                                                              face_location=face_location,
-                                                              metronome_filename=m_name)
-                        video_writer.write(frame)
-                        m_ind, direction = get_next_metronome_filename(m_ind, metronome_jump, direction)
+                steps = steps_action_dict[episode].keys()
+                for step in range(len(steps)-1):
+                    video_writer = cv2.VideoWriter(
+                        filename=os.path.join(few_many_path, 'episode_{0}_step_{1}.avi'.format(episode, step)),
+                        fourcc=cv2.VideoWriter_fourcc(*'MJPG'),
+                        fps=fps,
+                        frameSize=(frame_size, frame_size)
+                    )
+                    # step_actions = steps_action_dict[episode][step]
+                    step_actions = get_step_actions(steps_action_dict[episode], step=step)
+                    for step_action in step_actions: #range(step_num - 1):
+                        # step_action = step_actions[action_i]
+                        frame_path = os.path.join(plots_dir, it1 + ' ' + it2, at_filenames[step_action])
+                        agent_loc1 = torch.argwhere(episode_env[step_action, 0, :, :]).squeeze()
+                        agent_loc2 = torch.argwhere(episode_env[step_action + 1, 0, :, :]).squeeze()
+                        # frame = cv2.imread(frame_path, cv2.IMREAD_COLOR) #[:, 922:6451, :]
+                        show_agents = (agent_loc1 != agent_loc2)
+                        grid = make_frame_square(Image.open(frame_path))
+                        t2 = int(frame_timepoints[step_action + 1].round().item())
+                        one_step_face_locations = get_one_step_face_locations(face=face,
+                                                                              agent_loc1=agent_loc1,
+                                                                              time_point1=t1,
+                                                                              agent_loc2=agent_loc2,
+                                                                              time_point2=t2,
+                                                                              smooth=True,
+                                                                              intermediate_jump=1)
+                        div = int((t2 - t1) // len(one_step_face_locations))
+                        for f_i, f in enumerate(range(t1, t2)):
+                            m_name = './metronome/{0}.png'.format(m_ind)
+                            face_location = one_step_face_locations[int(f_i // div)]
+                            frame = get_next_frame_with_metronome(grid.copy(),
+                                                                  face=face,
+                                                                  background_location=one_step_face_locations[0],
+                                                                  face_location=face_location,
+                                                                  metronome_filename=m_name)
+                            video_writer.write(frame)
+                            m_ind, direction = get_next_metronome_filename(m_ind, metronome_jump, direction)
 
-                    t1 = t2
-                frame_path = os.path.join(plots_dir, it1 + ' ' + it2, at_filenames[step_num - 1])  # last step
-                grid = Image.open(frame_path)
-                last_m_name = './metronome/{0}.png'.format(m_ind)
-                frame = get_next_frame_with_metronome(grid.copy(), metronome_filename=last_m_name)
+                        t1 = t2
+                    video_writer.release()
 
-                video_writer.write(frame)
-
-                video_writer.release()
+                # video_writer = cv2.VideoWriter(
+                #     filename=os.path.join(few_many_path, 'episode_{0}_step_{1}.avi'.format(episode, step_action_num - 1)),
+                #     fourcc=cv2.VideoWriter_fourcc(*'MJPG'),
+                #     fps=fps,
+                #     frameSize=(frame_size, frame_size)
+                # )
+                # frame_path = os.path.join(plots_dir, it1 + ' ' + it2, at_filenames[step_action_num - 1])  # last step
+                # grid = Image.open(frame_path)
+                # last_m_name = './metronome/{0}.png'.format(m_ind)
+                # frame = get_next_frame_with_metronome(grid.copy(), metronome_filename=last_m_name)
+                #
+                # video_writer.write(frame)
+                #
+                # video_writer.release()

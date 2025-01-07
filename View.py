@@ -59,6 +59,7 @@ def make_frame_square(image):
     # print("Image has been resized !")
     return background
 
+
 def get_marker(layer: int, reward: int):
     markers = {
         # 1: '■',
@@ -218,6 +219,7 @@ def get_one_step_face_locations(face, agent_loc1=None, time_point1=None, agent_l
 
     return face_locations  # frames
 
+
 def get_next_frame_with_metronome(grid: Image,
                                   face: Face = None,
                                   background_location=None,
@@ -228,6 +230,49 @@ def get_next_frame_with_metronome(grid: Image,
     metronome.thumbnail((1200, 1200), Image.Resampling.LANCZOS)
     grid.paste(metronome, (xy[0] - 500, xy[1]),
                metronome.convert('RGBA'))
+    if face is not None:
+        grid.paste(face.background, background_location,
+                   face.background.convert('RGBA'))
+
+        grid.paste(face.face_copy, face_location,
+                   face.face_copy.convert('RGBA'))
+    frame_np = np.array(grid, dtype=np.uint8)  # [:, 922:6451, :]
+    frame = cv2.cvtColor(np.array(frame_np), cv2.COLOR_RGB2BGR)
+    return frame
+
+
+def get_times(fps, time_point):
+    time_unit = 1000 / fps
+    minutes = int((time_point * time_unit) // (1000 * 60))
+    seconds = int((time_point * time_unit - minutes * (1000 * 60)) // 1000)
+    milli_seconds = int(time_point * time_unit - seconds * 1000 - minutes * (1000 * 60))
+    return minutes, seconds, milli_seconds
+
+
+def get_next_frame_with_timer(grid: Image,
+                              face: Face = None,
+                              background_location=None,
+                              face_location=None,
+                              fps=20,
+                              time_point=0):
+    xy = [int(7372 // 2), int(800)]
+    minutes, seconds, milli_seconds = get_times(fps, time_point)
+    at_time = "{:02d}:{:02d}.{:02d}".format(minutes, seconds, milli_seconds // 10)
+    # metronome = Image.open(metronome_filename).copy()
+    # metronome.thumbnail((1200, 1200), Image.Resampling.LANCZOS)
+    # grid.paste(metronome, (xy[0] - 500, xy[1]),
+    #            metronome.convert('RGBA'))
+    grid_cv2 = cv2.putText(img=np.array(grid),
+                           text=at_time,
+                           org=(xy[0] - 600, xy[1]),
+                           fontFace=cv2.FONT_HERSHEY_PLAIN,
+                           fontScale=20,
+                           color=(0, 0, 0),
+                           thickness=20,
+                           lineType=cv2.LINE_AA)
+    # grid_pil = cv2.cvtColor(grid_cv2, cv2.COLOR_BGR2RGB)
+    grid = Image.fromarray(grid_cv2)
+
     if face is not None:
         grid.paste(face.background, background_location,
                    face.background.convert('RGBA'))
@@ -270,6 +315,7 @@ def create_video_from_plots(params):
             if len(few_many_dict[it1 + ' ' + it2]) == 0:
                 continue
             print(it1 + ' ' + it2)
+            prefix = it1[0] + it2[0]
             few_many_path = os.path.join(videos_dir, it1 + ' ' + it2)
             if not os.path.exists(few_many_path):
                 os.mkdir(few_many_path)
@@ -300,16 +346,16 @@ def create_video_from_plots(params):
                 direction = 1
                 # step_num = 3
                 steps = steps_action_dict[episode].keys()
-                for step in range(len(steps)-1):
+                for step in range(len(steps) - 1):
                     video_writer = cv2.VideoWriter(
-                        filename=os.path.join(few_many_path, 'episode_{0}_step_{1}.avi'.format(episode, step)),
-                        fourcc=cv2.VideoWriter_fourcc(*'MJPG'),
+                        filename=os.path.join(few_many_path, '{0}_{1:03d}_{2:03d}.mp4'.format(prefix, episode, step)), #episode_{0}_step_{1}
+                        fourcc=cv2.VideoWriter_fourcc(*'MP4V'), #cv2.VideoWriter_fourcc(*'MJPG') MP4V
                         fps=fps,
                         frameSize=(frame_size, frame_size)
                     )
                     # step_actions = steps_action_dict[episode][step]
                     step_actions = get_step_actions(steps_action_dict[episode], step=step)
-                    for step_action in step_actions: #range(step_num - 1):
+                    for step_action in step_actions:  # range(step_num - 1):
                         # step_action = step_actions[action_i]
                         frame_path = os.path.join(plots_dir, it1 + ' ' + it2, at_filenames[step_action])
                         agent_loc1 = torch.argwhere(episode_env[step_action, 0, :, :]).squeeze()
@@ -327,15 +373,28 @@ def create_video_from_plots(params):
                                                                               intermediate_jump=1)
                         div = int((t2 - t1) // len(one_step_face_locations))
                         for f_i, f in enumerate(range(t1, t2)):
-                            m_name = './metronome/{0}.png'.format(m_ind)
+                            ###########
                             face_location = one_step_face_locations[int(f_i // div)]
-                            frame = get_next_frame_with_metronome(grid.copy(),
-                                                                  face=face,
-                                                                  background_location=one_step_face_locations[0],
-                                                                  face_location=face_location,
-                                                                  metronome_filename=m_name)
+                            frame = get_next_frame_with_timer(grid=grid.copy(),
+                                                              face=face,
+                                                              background_location=one_step_face_locations[0],
+                                                              face_location=face_location,
+                                                              fps=20,
+                                                              time_point=f
+                                                              )
                             video_writer.write(frame)
-                            m_ind, direction = get_next_metronome_filename(m_ind, metronome_jump, direction)
+                            ###########
+                            ###########
+                            # m_name = './metronome/{0}.png'.format(m_ind)
+                            # face_location = one_step_face_locations[int(f_i // div)]
+                            # frame = get_next_frame_with_metronome(grid.copy(),
+                            #                                       face=face,
+                            #                                       background_location=one_step_face_locations[0],
+                            #                                       face_location=face_location,
+                            #                                       metronome_filename=m_name)
+                            # video_writer.write(frame)
+                            # m_ind, direction = get_next_metronome_filename(m_ind, metronome_jump, direction)
+                            ###########
 
                         t1 = t2
                     video_writer.release()
